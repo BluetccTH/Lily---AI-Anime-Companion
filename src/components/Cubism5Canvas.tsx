@@ -137,8 +137,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         if (header !== 'MOC3') throw new Error(`Invalid MOC3 header "${header}" (${mocSize} bytes): ${mocUrl}`);
 
         const version = CubismMoc.getMocVersionFromBuffer(mocBuffer);
-        const latestVersion = new CubismMoc(new ArrayBuffer(0) as any);
-        void latestVersion;
         console.info('[Lily Cubism 5] MOC diagnostics', { url: mocUrl, bytes: mocSize, version });
 
         if (!Number.isFinite(version) || version <= 0) {
