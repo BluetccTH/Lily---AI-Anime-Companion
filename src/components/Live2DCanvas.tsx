@@ -172,11 +172,9 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
 
         Live2DModel.registerTicker(PIXI.Ticker);
 
-        // Vite base is the GitHub Pages project path.
         const modelUrl = `${import.meta.env.BASE_URL}live2d/MassageSeacubus_rei.model3.json`;
         console.info('[Lily Live2D] Loading model:', modelUrl);
 
-        // Verify that GitHub Pages can serve the model before passing it to the Live2D loader.
         const modelResponse = await fetch(modelUrl, { cache: 'no-store' });
         if (!modelResponse.ok) {
           throw new Error(`Live2D model HTTP ${modelResponse.status}: ${modelUrl}`);
@@ -378,7 +376,6 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
 
     return () => {
       isCancelled = true;
-      window.removeEventListener('resize', () => {});
       if (app) {
         try {
           app.destroy(true, { children: true, texture: true, baseTexture: true });
@@ -427,15 +424,8 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
       />
 
       {loadError && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center z-10 pointer-events-none px-6 text-center">
-          <div className="relative animate-float">
-            <img
-              src={`${import.meta.env.BASE_URL}preview.png`}
-              alt="Lily"
-              className="max-h-[70vh] max-w-[90vw] object-contain drop-shadow-[0_0_35px_rgba(56,189,248,0.4)]"
-            />
-          </div>
-          <div className="mt-3 max-w-md rounded-xl bg-slate-950/80 px-4 py-2 text-xs text-red-200 border border-red-400/20 backdrop-blur-md">
+        <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none px-6 text-center">
+          <div className="max-w-md rounded-xl bg-slate-950/80 px-4 py-3 text-xs text-red-200 border border-red-400/20 backdrop-blur-md">
             Live2D โหลดไม่สำเร็จ: {loadError}
           </div>
         </div>
