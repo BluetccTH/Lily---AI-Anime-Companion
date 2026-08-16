@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from '@framework/live2dcubismframework';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CubismFramework, Option } from '@framework/live2dcubismframework';
 import { CubismUserModel } from '@framework/model/cubismusermodel';
 import { CubismMoc } from '@framework/model/cubismmoc';
@@ -64,7 +64,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
   }, []);
 
   const updateTransform = useCallback(() => {
-    // Transform is handled by the canvas sizing in the first working pass.
+    // Keep the first pass stable while the renderer owns the canvas viewport.
     void framing; void scaleOffset; void yOffset;
   }, [framing, scaleOffset, yOffset]);
 
@@ -125,7 +125,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         if (!consistent) {
           throw new Error(
             `MOC3 integrity check failed (v${mocVersionByte}, ${mocBuffer.byteLength} bytes). ` +
-            'The model must be re-exported from Cubism 5.0.02 or newer.'
+            'Re-export this model with Cubism 5.0.02 or newer.'
           );
         }
 
