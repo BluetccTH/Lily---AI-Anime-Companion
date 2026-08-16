@@ -4,7 +4,6 @@ import { Live2DModel } from 'pixi-live2d-display/cubism4';
 import { soundManager } from '../utils/audioSynth';
 import { ExpressionType } from '../types';
 
-// Expose PIXI globally for pixi-live2d-display
 (window as any).PIXI = PIXI;
 
 interface Live2DCanvasProps {
@@ -30,7 +29,7 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
   const mouthOpenRef = useRef<number>(0);
   const fitModelRef = useRef<() => void>(() => {});
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [isLoaded, setIsLoaded] = useState<boolean>(false);
+  const [isLoaded, setIsLoaded] = useState(false);
   const [interactiveFeedback, setInteractiveFeedback] = useState<{
     id: number;
     x: number;
@@ -43,13 +42,11 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
     soundManager.setMouthCallback((val) => {
       mouthOpenRef.current = val;
     });
-    return () => {
-      soundManager.clearMouthCallback();
-    };
+    return () => soundManager.clearMouthCallback();
   }, []);
 
-  const isSpeakingRef = useRef<boolean>(isSpeaking);
-  const currentExpressionRef = useRef<ExpressionType>(currentExpression);
+  const isSpeakingRef = useRef(isSpeaking);
+  const currentExpressionRef = useRef(currentExpression);
 
   useEffect(() => {
     isSpeakingRef.current = isSpeaking;
@@ -65,43 +62,38 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
 
     try {
       if (currentExpression === 'normal') {
-        if (model.internalModel?.coreModel) {
-          const core = model.internalModel.coreModel as any;
+        const core = model.internalModel?.coreModel as any;
+        if (core) {
           for (let i = 1; i <= 8; i++) {
-            try {
-              core.setParameterValueById(`ParamBiaoQ${i}`, 0);
-            } catch {}
+            try { core.setParameterValueById(`ParamBiaoQ${i}`, 0); } catch {}
           }
         }
-      } else {
-        const expressionMap: Record<ExpressionType, number> = {
-          blush: 0,
-          happy: 1,
-          wink: 2,
-          surprised: 3,
-          thinking: 4,
-          pout: 5,
-          shy: 6,
-          love: 7,
-          normal: 0,
-        };
-        const expIdx = expressionMap[currentExpression];
-        if (typeof expIdx === 'number') {
-          if (typeof model.expression === 'function') {
-            model.expression(expIdx);
-          }
-          if (model.internalModel?.coreModel) {
-            const core = model.internalModel.coreModel as any;
-            for (let i = 1; i <= 8; i++) {
-              try {
-                core.setParameterValueById(`ParamBiaoQ${i}`, i === expIdx + 1 ? 1.0 : 0);
-              } catch {}
-            }
-          }
+        return;
+      }
+
+      const expressionMap: Record<ExpressionType, number> = {
+        blush: 0,
+        happy: 1,
+        wink: 2,
+        surprised: 3,
+        thinking: 4,
+        pout: 5,
+        shy: 6,
+        love: 7,
+        normal: 0,
+      };
+      const expIdx = expressionMap[currentExpression];
+      if (typeof expIdx !== 'number') return;
+
+      if (typeof model.expression === 'function') model.expression(expIdx);
+      const core = model.internalModel?.coreModel as any;
+      if (core) {
+        for (let i = 1; i <= 8; i++) {
+          try { core.setParameterValueById(`ParamBiaoQ${i}`, i === expIdx + 1 ? 1 : 0); } catch {}
         }
       }
     } catch (err) {
-      console.warn('Expression change error:', err);
+      console.warn('[Lily Live2D] expression error:', err);
     }
   }, [currentExpression, isLoaded]);
 
@@ -119,15 +111,13 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
 
     if (framing === 'upper') {
       const targetHeight = appH * 1.55 * scaleOffset;
-      const computedScale = targetHeight / origH;
-      model.scale.set(computedScale);
+      model.scale.set(targetHeight / origH);
       model.anchor.set(0.5, 0.04);
       model.x = appW / 2;
       model.y = appH * 0.05 + yOffset;
     } else {
       const targetHeight = appH * 0.88 * scaleOffset;
-      const computedScale = targetHeight / origH;
-      model.scale.set(computedScale);
+      model.scale.set(targetHeight / origH);
       model.anchor.set(0.5, 0.02);
       model.x = appW / 2;
       model.y = appH * 0.06 + yOffset;
@@ -137,9 +127,7 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
   fitModelRef.current = updateModelTransform;
 
   useEffect(() => {
-    if (isLoaded) {
-      updateModelTransform();
-    }
+    if (isLoaded) updateModelTransform();
   }, [framing, scaleOffset, yOffset, isLoaded, updateModelTransform]);
 
   useEffect(() => {
@@ -149,9 +137,54 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
     let app: PIXI.Application | null = null;
     let isCancelled = false;
 
+    const baseUrl = import.meta.env.BASE_URL;
+    const modelUrl = `${baseUrl}live2d/MassageSeacubus_rei.model3.json`;
+    const mocUrl = `${baseUrl}live2d/MassageSeacubus_rei.moc3`;
+    const textureUrl = `${baseUrl}live2d/MassageSeacubus_rei.4096/texture_00.png`;
+    const coreUrl = `${baseUrl}live2dcubismcore.min.js`;
+
+    async function verifyAsset(url: string, label: string) {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`${label} HTTP ${res.status}`);
+      return res;
+    }
+
     async function initPixi() {
       try {
         setLoadError(null);
+
+        if (!(window as any).Live2DCubismCore) {
+          await verifyAsset(coreUrl, 'Cubism Core');
+          await new Promise<void>((resolve) => {
+            const startedAt = performance.now();
+            const poll = () => {
+              if ((window as any).Live2DCubismCore) {
+                resolve();
+                return;
+              }
+              if (performance.now() - startedAt > 4000) {
+                resolve();
+                return;
+              }
+              window.setTimeout(poll, 50);
+            };
+            poll();
+          });
+        }
+
+        if (!(window as any).Live2DCubismCore) {
+          throw new Error('Cubism Core script loaded but Live2DCubismCore is unavailable');
+        }
+
+        const modelResponse = await verifyAsset(modelUrl, 'Live2D model');
+        const modelJson = await modelResponse.json();
+        if (!modelJson?.FileReferences?.Moc) {
+          throw new Error('Live2D model JSON is invalid: FileReferences.Moc missing');
+        }
+
+        await verifyAsset(mocUrl, 'Live2D MOC3');
+        await verifyAsset(textureUrl, 'Live2D texture');
+
         const width = container.clientWidth || window.innerWidth;
         const height = container.clientHeight || window.innerHeight;
 
@@ -163,27 +196,17 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
           autoDensity: true,
           antialias: true,
         });
-
         pixiAppRef.current = app;
+
         if (app.view) {
           container.innerHTML = '';
           container.appendChild(app.view as HTMLCanvasElement);
         }
 
         Live2DModel.registerTicker(PIXI.Ticker);
+        console.info('[Lily Live2D] Loading:', modelUrl);
 
-        const modelUrl = `${import.meta.env.BASE_URL}live2d/MassageSeacubus_rei.model3.json`;
-        console.info('[Lily Live2D] Loading model:', modelUrl);
-
-        const modelResponse = await fetch(modelUrl, { cache: 'no-store' });
-        if (!modelResponse.ok) {
-          throw new Error(`Live2D model HTTP ${modelResponse.status}: ${modelUrl}`);
-        }
-
-        const model = await Live2DModel.from(modelUrl, {
-          autoInteract: false,
-        });
-
+        const model = await Live2DModel.from(modelUrl, { autoInteract: false });
         if (isCancelled) {
           model.destroy();
           return;
@@ -200,8 +223,8 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
         let bodyAngleZ = 0;
         let eyeBallX = 0;
         let eyeBallY = 0;
-        let eyeOpenL = 1.0;
-        let eyeOpenR = 1.0;
+        let eyeOpenL = 1;
+        let eyeOpenR = 1;
         let currentMouthY = 0;
         let tickCount = 0;
         let nextAutonomousShiftTime = 0;
@@ -214,7 +237,7 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
         let blinkPhase = 0;
 
         app.ticker.add(() => {
-          if (!model || !model.internalModel || !model.internalModel.coreModel) return;
+          if (!model.internalModel?.coreModel) return;
           const core = model.internalModel.coreModel as any;
           const now = performance.now();
           tickCount += 0.035;
@@ -222,7 +245,6 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
           if (now > nextAutonomousShiftTime) {
             const exp = currentExpressionRef.current;
             const moodShift = Math.random();
-
             if (exp === 'love') {
               targetAutoAngleX = (Math.random() - 0.5) * 6;
               targetAutoAngleY = 2 + Math.random() * 6;
@@ -268,7 +290,6 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
               targetAutoEyeX = (Math.random() - 0.5) * 0.3;
               targetAutoEyeY = 0.1 + Math.random() * 0.25;
             }
-
             nextAutonomousShiftTime = now + 2500 + Math.random() * 3000;
           }
 
@@ -280,7 +301,6 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
           const finalTargetHeadZ = targetAutoAngleZ + microSwayZ;
           const finalTargetEyeX = targetAutoEyeX + Math.sin(tickCount * 0.6) * 0.06;
           const finalTargetEyeY = targetAutoEyeY + Math.cos(tickCount * 0.5) * 0.06;
-
           headAngleX += (finalTargetHeadX - headAngleX) * 0.045;
           headAngleY += (finalTargetHeadY - headAngleY) * 0.045;
           headAngleZ += (finalTargetHeadZ - headAngleZ) * 0.045;
@@ -301,12 +321,12 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
           } else if (blinkPhase === 2) {
             eyeOpenL += 0.24;
             eyeOpenR += 0.24;
-            if (eyeOpenL >= 1.0) {
-              eyeOpenL = 1.0;
-              eyeOpenR = 1.0;
+            if (eyeOpenL >= 1) {
+              eyeOpenL = 1;
+              eyeOpenR = 1;
               blinkPhase = 0;
-              const isDoubleBlink = Math.random() < 0.22;
-              nextBlinkTime = now + (isDoubleBlink ? 180 + Math.random() * 180 : 2600 + Math.random() * 4200);
+              const doubleBlink = Math.random() < 0.22;
+              nextBlinkTime = now + (doubleBlink ? 180 + Math.random() * 180 : 2600 + Math.random() * 4200);
             }
           }
 
@@ -315,11 +335,8 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
             const speechPulse1 = Math.sin(tickCount * 14) * 0.4 + 0.4;
             const speechPulse2 = Math.sin(tickCount * 8.5) * 0.3;
             const conversationalMouth = Math.max(0.1, Math.min(0.9, speechPulse1 + speechPulse2));
-            targetMouth = mouthOpenRef.current > 0.05
-              ? Math.max(mouthOpenRef.current, conversationalMouth * 0.7)
-              : conversationalMouth;
+            targetMouth = mouthOpenRef.current > 0.05 ? Math.max(mouthOpenRef.current, conversationalMouth * 0.7) : conversationalMouth;
           }
-
           currentMouthY += (targetMouth - currentMouthY) * 0.35;
           if (currentMouthY < 0.01) currentMouthY = 0;
 
@@ -331,30 +348,24 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
             core.setParameterValueById('ParamBodyAngleZ', bodyAngleZ);
             core.setParameterValueById('ParamEyeBallX', eyeBallX);
             core.setParameterValueById('ParamEyeBallY', eyeBallY);
-
             if (blinkPhase !== 0 || eyeOpenL < 0.99) {
               core.setParameterValueById('ParamEyeLOpen', eyeOpenL);
               core.setParameterValueById('ParamEyeROpen', eyeOpenR);
             }
-
             const breathVal = (Math.sin(tickCount * 1.5) + 1) * 0.5;
             core.setParameterValueById('ParamBreath', breathVal);
             core.setParameterValueById('ParamBreath2', breathVal);
             core.setParameterValueById('ParamHairBack', Math.sin(tickCount * 1.2) * 0.45);
             core.setParameterValueById('ParamHairFront', Math.cos(tickCount * 1.1) * 0.35);
             core.setParameterValueById('ParamHairSide', Math.sin(tickCount * 0.9) * 0.3);
-
             try {
               core.setParameterValueById('ParamWingL', Math.sin(tickCount * 1.3) * 0.3);
               core.setParameterValueById('ParamWingR', Math.sin(tickCount * 1.3) * 0.3);
             } catch {}
-
             core.setParameterValueById('ParamMouthOpenY', currentMouthY);
             core.setParameterValueById('ParamJawOpen', currentMouthY * 0.75);
             core.setParameterValueById('ParamMouthPressLipOpen', currentMouthY * 0.4);
-            if (currentMouthY > 0.05) {
-              core.setParameterValueById('ParamMouthForm', 0.6);
-            }
+            if (currentMouthY > 0.05) core.setParameterValueById('ParamMouthForm', 0.6);
           } catch {}
         });
 
@@ -363,23 +374,21 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
           app.renderer.resize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
           fitModelRef.current();
         };
-
         window.addEventListener('resize', handleResize);
         setIsLoaded(true);
       } catch (err: any) {
-        console.error('Live2D initialization error:', err);
-        setLoadError(err?.message || 'Live2D Model failed to initialize');
+        console.error('[Lily Live2D] initialization failed:', err);
+        const message = err instanceof Error ? err.message : String(err);
+        setLoadError(message || 'Unknown Live2D initialization error');
       }
     }
 
-    initPixi();
+    void initPixi();
 
     return () => {
       isCancelled = true;
       if (app) {
-        try {
-          app.destroy(true, { children: true, texture: true, baseTexture: true });
-        } catch {}
+        try { app.destroy(true, { children: true, texture: true, baseTexture: true }); } catch {}
       }
     };
   }, []);
@@ -387,9 +396,7 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
   const triggerVisualReaction = useCallback((x: number, y: number, emoji: string, text?: string) => {
     const id = Date.now() + Math.random();
     setInteractiveFeedback((prev) => [...prev, { id, x, y, emoji, text }]);
-    setTimeout(() => {
-      setInteractiveFeedback((prev) => prev.filter((item) => item.id !== id));
-    }, 1800);
+    setTimeout(() => setInteractiveFeedback((prev) => prev.filter((item) => item.id !== id)), 1800);
   }, []);
 
   const handlePointerDown = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -397,7 +404,6 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
     const relY = clickY / rect.height;
-
     if (relY < 0.25) {
       soundManager.playHaloSound();
       triggerVisualReaction(clickX, clickY, '✨', 'วงแหวนดวงดาวส่องประกาย!');
@@ -414,37 +420,21 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
   };
 
   return (
-    <div
-      className="relative w-full h-full flex items-center justify-center cursor-pointer overflow-hidden"
-      onClick={handlePointerDown}
-    >
-      <div
-        ref={containerRef}
-        className="absolute inset-0 w-full h-full flex items-center justify-center"
-      />
+    <div className="relative w-full h-full flex items-center justify-center cursor-pointer overflow-hidden" onClick={handlePointerDown}>
+      <div ref={containerRef} className="absolute inset-0 w-full h-full flex items-center justify-center" />
 
       {loadError && (
         <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none px-6 text-center">
-          <div className="max-w-md rounded-xl bg-slate-950/80 px-4 py-3 text-xs text-red-200 border border-red-400/20 backdrop-blur-md">
+          <div className="max-w-xl rounded-xl bg-slate-950/80 px-4 py-3 text-xs text-red-200 border border-red-400/20 backdrop-blur-md">
             Live2D โหลดไม่สำเร็จ: {loadError}
           </div>
         </div>
       )}
 
       {interactiveFeedback.map((fb) => (
-        <div
-          key={fb.id}
-          className="absolute pointer-events-none transform -translate-x-1/2 -translate-y-1/2 animate-float z-30 flex flex-col items-center"
-          style={{ left: `${fb.x}px`, top: `${fb.y}px` }}
-        >
-          <span className="text-3xl filter drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]">
-            {fb.emoji}
-          </span>
-          {fb.text && (
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-900/80 text-pink-200 border border-pink-500/30 backdrop-blur-md whitespace-nowrap mt-1 shadow-lg">
-              {fb.text}
-            </span>
-          )}
+        <div key={fb.id} className="absolute pointer-events-none transform -translate-x-1/2 -translate-y-1/2 animate-float z-30 flex flex-col items-center" style={{ left: `${fb.x}px`, top: `${fb.y}px` }}>
+          <span className="text-3xl filter drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]">{fb.emoji}</span>
+          {fb.text && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-900/80 text-pink-200 border border-pink-500/30 backdrop-blur-md whitespace-nowrap mt-1 shadow-lg">{fb.text}</span>}
         </div>
       ))}
     </div>
