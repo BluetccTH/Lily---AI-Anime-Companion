@@ -1,8 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from '@framework/live2dcubismframework';
 import { CubismFramework, Option } from '@framework/live2dcubismframework';
 import { CubismUserModel } from '@framework/model/cubismusermodel';
+import { CubismMoc } from '@framework/model/cubismmoc';
 import { CubismRenderer_WebGL } from '@framework/rendering/cubismrenderer_webgl';
-import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { ExpressionType } from '../types';
 import { soundManager } from '../utils/audioSynth';
 
@@ -63,7 +63,10 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
     } catch {}
   }, []);
 
-  const updateTransform = useCallback(() => {}, [framing, scaleOffset, yOffset]);
+  const updateTransform = useCallback(() => {
+    // Transform is handled by the canvas sizing in the first working pass.
+    void framing; void scaleOffset; void yOffset;
+  }, [framing, scaleOffset, yOffset]);
 
   useEffect(() => {
     if (ready) updateTransform();
@@ -102,16 +105,35 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         const mocBuffer = await mocResponse.arrayBuffer();
         const first16 = new Uint8Array(mocBuffer.slice(0, 16));
         const header = new TextDecoder('ascii').decode(first16.slice(0, 4));
-        console.info('[Lily Cubism 5] MOC buffer', { url: mocUrl, bytes: mocBuffer.byteLength, header, first16: Array.from(first16) });
+        const mocVersionByte = first16[4] ?? 0;
+        console.info('[Lily Cubism 5] MOC buffer', {
+          url: mocUrl,
+          bytes: mocBuffer.byteLength,
+          header,
+          mocVersionByte,
+          first16: Array.from(first16),
+        });
+
         if (mocBuffer.byteLength < 16) throw new Error(`MOC3 is too small (${mocBuffer.byteLength} bytes): ${mocUrl}`);
         if (header !== 'MOC3') throw new Error(`Invalid MOC3 header "${header}" (${mocBuffer.byteLength} bytes): ${mocUrl}`);
+        if (mocVersionByte !== 5) {
+          throw new Error(`Unsupported MOC3 version ${mocVersionByte}. This build expects Cubism 5 MOC version 5.`);
+        }
+
+        const consistent = CubismMoc.hasMocConsistency(mocBuffer);
+        console.info('[Lily Cubism 5] MOC consistency:', consistent);
+        if (!consistent) {
+          throw new Error(
+            `MOC3 integrity check failed (v${mocVersionByte}, ${mocBuffer.byteLength} bytes). ` +
+            'The model must be re-exported from Cubism 5.0.02 or newer.'
+          );
+        }
 
         const model = new CubismUserModel();
-        // Official Web SDK path: ArrayBuffer -> CubismUserModel.loadModel().
-        // Disable the optional consistency gate here so Cubism 5 MOC revisions
-        // that are newer than an older framework validation table can still load.
-        model.loadModel(mocBuffer, false);
-        if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (${mocBuffer.byteLength} bytes).`);
+        model.loadModel(mocBuffer, true);
+        if (!model.getModel()) {
+          throw new Error(`Cubism 5 Core failed to create the model (v${mocVersionByte}, ${mocBuffer.byteLength} bytes).`);
+        }
 
         model.createRenderer(canvas.width, canvas.height, 2);
         const renderer = model.getRenderer();
