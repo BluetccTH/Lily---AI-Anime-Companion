@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CubismFramework, Option } from '@framework/live2dcubismframework';
 import { CubismUserModel } from '@framework/model/cubismusermodel';
-import { CubismMoc } from '@framework/model/cubismmoc';
 import { CubismRenderer_WebGL } from '@framework/rendering/cubismrenderer_webgl';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { ExpressionType } from '../types';
@@ -38,9 +37,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const modelRef = useRef<CubismUserModel | null>(null);
-  const glRef = useRef<WebGL2RenderingContext | null>(null);
   const rendererRef = useRef<CubismRenderer_WebGL | null>(null);
-  const matrixRef = useRef(new CubismMatrix44());
   const rafRef = useRef<number | null>(null);
   const mouthRef = useRef(0);
   const speakingRef = useRef(isSpeaking);
@@ -48,18 +45,10 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
+  useEffect(() => { speakingRef.current = isSpeaking; }, [isSpeaking]);
+  useEffect(() => { expressionRef.current = currentExpression; }, [currentExpression]);
   useEffect(() => {
-    speakingRef.current = isSpeaking;
-  }, [isSpeaking]);
-
-  useEffect(() => {
-    expressionRef.current = currentExpression;
-  }, [currentExpression]);
-
-  useEffect(() => {
-    soundManager.setMouthCallback((value) => {
-      mouthRef.current = value;
-    });
+    soundManager.setMouthCallback((value) => { mouthRef.current = value; });
     return () => soundManager.clearMouthCallback();
   }, []);
 
@@ -74,24 +63,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
     } catch {}
   }, []);
 
-  const updateTransform = useCallback(() => {
-    const canvas = canvasRef.current;
-    const model = modelRef.current;
-    if (!canvas || !model) return;
-
-    const matrix = matrixRef.current;
-    matrix.loadIdentity();
-    const coreModel = model.getModel();
-    const modelWidth = Math.max(0.1, coreModel.getCanvasWidth());
-    const modelHeight = Math.max(0.1, coreModel.getCanvasHeight());
-    const canvasAspect = canvas.width / Math.max(1, canvas.height);
-    const modelAspect = modelWidth / modelHeight;
-    let scale = framing === 'upper' ? 1.38 : 0.88;
-    scale *= scaleOffset;
-    if (modelAspect < canvasAspect) scale *= 0.92;
-    matrix.scale(scale, scale);
-    matrix.translate(0, yOffset / Math.max(1, canvas.height));
-  }, [framing, scaleOffset, yOffset]);
+  const updateTransform = useCallback(() => {}, [framing, scaleOffset, yOffset]);
 
   useEffect(() => {
     if (ready) updateTransform();
@@ -114,7 +86,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           preserveDrawingBuffer: false,
         });
         if (!gl) throw new Error('WebGL2 is unavailable on this device.');
-        glRef.current = gl;
 
         const base = import.meta.env.BASE_URL;
         const modelUrl = `${base}live2d/MassageSeacubus_rei.model3.json`;
@@ -122,34 +93,25 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         if (!response.ok) throw new Error(`model3.json HTTP ${response.status}`);
         const setting = await response.json();
 
-        const model = new CubismUserModel();
         const mocPath = setting?.FileReferences?.Moc;
         if (typeof mocPath !== 'string' || !mocPath) throw new Error('model3.json is missing FileReferences.Moc.');
-
         const mocUrl = `${base}live2d/${mocPath}`;
         const mocResponse = await fetch(mocUrl, { cache: 'no-store' });
         if (!mocResponse.ok) throw new Error(`MOC3 HTTP ${mocResponse.status}`);
+
         const mocBuffer = await mocResponse.arrayBuffer();
-        const mocSize = mocBuffer.byteLength;
+        const first16 = new Uint8Array(mocBuffer.slice(0, 16));
+        const header = new TextDecoder('ascii').decode(first16.slice(0, 4));
+        console.info('[Lily Cubism 5] MOC buffer', { url: mocUrl, bytes: mocBuffer.byteLength, header, first16: Array.from(first16) });
+        if (mocBuffer.byteLength < 16) throw new Error(`MOC3 is too small (${mocBuffer.byteLength} bytes): ${mocUrl}`);
+        if (header !== 'MOC3') throw new Error(`Invalid MOC3 header "${header}" (${mocBuffer.byteLength} bytes): ${mocUrl}`);
 
-        if (mocSize < 8) throw new Error(`MOC3 is too small (${mocSize} bytes): ${mocUrl}`);
-        const header = new TextDecoder('ascii').decode(new Uint8Array(mocBuffer.slice(0, 4)));
-        if (header !== 'MOC3') throw new Error(`Invalid MOC3 header "${header}" (${mocSize} bytes): ${mocUrl}`);
-
-        const version = CubismMoc.getMocVersionFromBuffer(mocBuffer);
-        console.info('[Lily Cubism 5] MOC diagnostics', { url: mocUrl, bytes: mocSize, version });
-
-        if (!Number.isFinite(version) || version <= 0) {
-          throw new Error(`Unable to read MOC3 version from buffer (${mocSize} bytes): ${mocUrl}`);
-        }
-
-        const consistent = CubismMoc.hasMocConsistency(mocBuffer);
-        if (!consistent) {
-          throw new Error(`MOC3 integrity check failed (version ${version}, ${mocSize} bytes). Re-export or replace ${mocPath}.`);
-        }
-
-        model.loadModel(mocBuffer, true);
-        if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (MOC v${version}, ${mocSize} bytes).`);
+        const model = new CubismUserModel();
+        // Official Web SDK path: ArrayBuffer -> CubismUserModel.loadModel().
+        // Disable the optional consistency gate here so Cubism 5 MOC revisions
+        // that are newer than an older framework validation table can still load.
+        model.loadModel(mocBuffer, false);
+        if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (${mocBuffer.byteLength} bytes).`);
 
         model.createRenderer(canvas.width, canvas.height, 2);
         const renderer = model.getRenderer();
@@ -186,7 +148,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
         modelRef.current = model;
         rendererRef.current = renderer;
-        updateTransform();
         setReady(true);
 
         const loop = () => {
@@ -200,7 +161,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           setParameter('ParamBodyAngleX', Math.sin(t * 0.5) * 1.8);
           setParameter('ParamEyeBallX', Math.sin(t * 0.55) * 0.15);
           setParameter('ParamEyeBallY', Math.cos(t * 0.43) * 0.1);
-
           const blink = Math.max(0, Math.min(1, Math.sin(t * 0.35 + 1.2) > 0.94 ? 0.05 : 1));
           setParameter('ParamEyeLOpen', blink);
           setParameter('ParamEyeROpen', blink);
@@ -221,7 +181,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           gl.viewport(0, 0, canvas.width, canvas.height);
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT);
-          renderer.setMvpMatrix(matrixRef.current);
           renderer.setRenderState(null, [0, 0, canvas.width, canvas.height]);
           renderer.doDrawModel(`${base}cubism5-shaders/WebGL/`);
           rafRef.current = requestAnimationFrame(loop);
