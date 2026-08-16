@@ -20,6 +20,10 @@ let cubismStarted = false;
 function ensureCubism5Started() {
   if (cubismStarted) return;
   const option = new Option();
+  // Cubism 5 Framework expects both fields to be supplied. Omitting logFunction
+  // leaves Core.Logging without a callable callback and causes
+  // "Logging.logFunction is not a function" when loading a MOC.
+  (option as any).logFunction = (message: string) => console.log(message);
   option.loggingLevel = 2 as any;
   CubismFramework.startUp(option);
   CubismFramework.initialize();
@@ -68,9 +72,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
       const coreModel = model.getModel();
       const id = CubismFramework.getIdManager().getId(name);
       const index = coreModel.getParameterIndex(id);
-      if (index >= 0) {
-        coreModel.setParameterValueByIndex(index, value);
-      }
+      if (index >= 0) coreModel.setParameterValueByIndex(index, value);
     } catch {}
   }, []);
 
@@ -81,27 +83,25 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
     const matrix = matrixRef.current;
     matrix.loadIdentity();
-
     const coreModel = model.getModel();
     const modelWidth = Math.max(0.1, coreModel.getCanvasWidth());
     const modelHeight = Math.max(0.1, coreModel.getCanvasHeight());
     const canvasAspect = canvas.width / Math.max(1, canvas.height);
     const modelAspect = modelWidth / modelHeight;
-
     let scale = framing === 'upper' ? 1.38 : 0.88;
     scale *= scaleOffset;
-    if (modelAspect < canvasAspect) {
-      scale *= 0.92;
-    }
-
+    if (modelAspect < canvasAspect) scale *= 0.92;
     matrix.scale(scale, scale);
     matrix.translate(0, yOffset / Math.max(1, canvas.height));
   }, [framing, scaleOffset, yOffset]);
 
   useEffect(() => {
+    if (ready) updateTransform();
+  }, [ready, updateTransform]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     let cancelled = false;
 
     const init = async () => {
@@ -109,14 +109,13 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         setLoadError(null);
         ensureCubism5Started();
 
-        const gl = (canvas.getContext('webgl2', {
+        const gl = canvas.getContext('webgl2', {
           alpha: true,
           antialias: true,
           premultipliedAlpha: true,
           preserveDrawingBuffer: false,
-        }) || canvas.getContext('webgl')) as WebGL2RenderingContext | null;
-
-        if (!gl) throw new Error('WebGL2/WebGL is unavailable on this device.');
+        });
+        if (!gl) throw new Error('WebGL2 is unavailable on this device.');
         glRef.current = gl;
 
         const base = import.meta.env.BASE_URL;
@@ -149,7 +148,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           image.decoding = 'async';
           image.src = textureUrl;
           await image.decode();
-
           const texture = gl.createTexture();
           if (!texture) throw new Error(`Unable to create WebGL texture ${i}.`);
           gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -175,11 +173,10 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
         const loop = () => {
           if (cancelled) return;
-          const core = model.getModel();
           const t = performance.now() * 0.001;
-
           const expression = expressionRef.current;
           const mood = expression === 'love' ? 1 : expression === 'shy' || expression === 'blush' ? 0.7 : 0.35;
+
           setParameter('ParamAngleX', Math.sin(t * 0.75) * (3 + mood * 3));
           setParameter('ParamAngleY', Math.cos(t * 0.66) * (2 + mood * 2));
           setParameter('ParamAngleZ', Math.sin(t * 0.42) * (2 + mood * 4));
@@ -202,7 +199,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           setParameter('ParamMouthOpenY', Math.max(0, Math.min(1, mouth)));
           setParameter('ParamJawOpen', Math.max(0, Math.min(1, mouth * 0.75)));
 
-          // Mild expression parameters used by this model.
           const expressionMap: Record<ExpressionType, number> = {
             blush: 1,
             happy: 2,
@@ -221,11 +217,9 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           gl.viewport(0, 0, canvas.width, canvas.height);
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT);
-
           renderer.setMvpMatrix(matrixRef.current);
           renderer.setRenderState(null, [0, 0, canvas.width, canvas.height]);
           renderer.doDrawModel(`${base}cubism5-shaders/WebGL/`);
-
           rafRef.current = requestAnimationFrame(loop);
         };
 
@@ -237,13 +231,10 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
     };
 
     const resize = () => {
-      if (!canvas) return;
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
       canvas.height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
-      if (rendererRef.current) {
-        rendererRef.current.setRenderTargetSize(canvas.width, canvas.height);
-      }
+      if (rendererRef.current) rendererRef.current.setRenderTargetSize(canvas.width, canvas.height);
       updateTransform();
     };
 
@@ -263,10 +254,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
     };
   }, [setParameter, updateTransform]);
 
-  useEffect(() => {
-    if (ready) updateTransform();
-  }, [ready, updateTransform]);
-
   const handleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -278,11 +265,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      <canvas
-        ref={canvasRef}
-        className="absolute inset-0 w-full h-full touch-none"
-        onClick={handleClick}
-      />
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full touch-none" onClick={handleClick} />
       {loadError && (
         <div className="absolute inset-0 flex items-center justify-center p-6 pointer-events-none z-20">
           <div className="rounded-xl border border-red-400/20 bg-slate-950/85 px-4 py-3 text-xs text-red-200 backdrop-blur-md text-center">
