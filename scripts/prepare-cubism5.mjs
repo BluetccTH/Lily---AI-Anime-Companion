@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 const root = resolve(process.cwd());
 const cacheRoot = resolve(root, '.cache');
 const frameworkDir = resolve(cacheRoot, 'CubismWebFramework');
-const shaderSource = resolve(frameworkDir, 'src', 'rendering', 'shaders', 'WebGL');
+const shaderSource = resolve(frameworkDir, 'Shaders', 'WebGL');
 const publicShaderDir = resolve(root, 'public', 'cubism5-shaders');
 
 mkdirSync(cacheRoot, { recursive: true });
@@ -23,8 +23,6 @@ if (!existsSync(frameworkDir)) {
   execFileSync('git', ['-C', frameworkDir, 'checkout', '5-r.5'], { stdio: 'inherit' });
 }
 
-// Cubism 5 Web R5 keeps WebGL shader sources in the Framework tree.
-// Copy them into public so the browser can fetch them at runtime.
 if (!existsSync(shaderSource)) {
   throw new Error(`Cubism 5 shader directory not found: ${shaderSource}`);
 }
