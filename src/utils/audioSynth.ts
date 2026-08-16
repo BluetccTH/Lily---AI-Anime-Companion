@@ -1,4 +1,4 @@
-// Web Audio API Synthesizer & Speech Controller for Perla
+// Web Audio API Synthesizer & Speech Controller for Lily
 
 class SoundManager {
   private ctx: AudioContext | null = null;
@@ -6,6 +6,9 @@ class SoundManager {
   private analyser: AnalyserNode | null = null;
   private isMouthSyncing = false;
   private mouthValueCallback: ((val: number) => void) | null = null;
+  private speechUnlocked = false;
+  private speechVoices: SpeechSynthesisVoice[] = [];
+  private speechQueueToken = 0;
 
   private initContext() {
     if (!this.ctx) {
@@ -15,7 +18,65 @@ class SoundManager {
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume();
+      void this.ctx.resume().catch(() => {});
+    }
+  }
+
+  private refreshSpeechVoices() {
+    if (!('speechSynthesis' in window)) return [];
+    try {
+      this.speechVoices = window.speechSynthesis.getVoices();
+    } catch {
+      this.speechVoices = [];
+    }
+    return this.speechVoices;
+  }
+
+  private ensureSpeechVoiceEvents() {
+    if (!('speechSynthesis' in window)) return;
+    this.refreshSpeechVoices();
+
+    if (!(window.speechSynthesis as any).__lilyVoiceListenerInstalled) {
+      const speech = window.speechSynthesis;
+      const handler = () => this.refreshSpeechVoices();
+      speech.addEventListener?.('voiceschanged', handler);
+      (speech as any).__lilyVoiceListenerInstalled = true;
+    }
+  }
+
+  /**
+   * iOS Safari requires speech to be primed from a real user gesture.
+   * We call this from touch/click/keydown handlers before any async request.
+   */
+  public unlockSpeech() {
+    if (!('speechSynthesis' in window)) return false;
+
+    this.ensureSpeechVoiceEvents();
+
+    try {
+      const speech = window.speechSynthesis;
+      speech.cancel();
+
+      // Prime the speech engine with a tiny muted utterance.
+      // Do not use an empty string because Safari may optimize it away.
+      const primer = new SpeechSynthesisUtterance('\u200b');
+      primer.lang = 'th-TH';
+      primer.volume = 0;
+      primer.rate = 10;
+      primer.pitch = 1;
+      primer.onend = () => {};
+      primer.onerror = () => {};
+      speech.speak(primer);
+      this.speechUnlocked = true;
+      setTimeout(() => {
+        try {
+          speech.cancel();
+        } catch {}
+      }, 80);
+      return true;
+    } catch (err) {
+      console.warn('Speech unlock failed:', err);
+      return false;
     }
   }
 
@@ -34,31 +95,24 @@ class SoundManager {
     try {
       this.initContext();
       if (!this.ctx) return;
-
       const now = this.ctx.currentTime;
-      const freqs = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6 (Celestial Chord)
+      const freqs = [523.25, 659.25, 783.99, 1046.5];
 
       freqs.forEach((f, i) => {
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-
         osc.type = 'sine';
         osc.frequency.setValueAtTime(f, now + i * 0.06);
-
         gain.gain.setValueAtTime(0, now + i * 0.06);
         gain.gain.linearRampToValueAtTime(0.08, now + i * 0.06 + 0.02);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.06 + 1.2);
-
         osc.connect(gain);
         gain.connect(this.ctx.destination);
-
         osc.start(now + i * 0.06);
         osc.stop(now + i * 0.06 + 1.3);
       });
-    } catch {
-      // Audio context might be restricted before user gesture
-    }
+    } catch {}
   }
 
   // Play sparkling starlight sound
@@ -67,25 +121,20 @@ class SoundManager {
     try {
       this.initContext();
       if (!this.ctx) return;
-
       const now = this.ctx.currentTime;
-      const notes = [1318.5, 1567.98, 1760.0, 2093.0, 2637.0]; // E6, G6, A6, C7, E7
+      const notes = [1318.5, 1567.98, 1760.0, 2093.0, 2637.0];
 
       notes.forEach((freq, idx) => {
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
         const gain = this.ctx.createGain();
-
         osc.type = 'triangle';
         osc.frequency.setValueAtTime(freq, now + idx * 0.04);
-
         gain.gain.setValueAtTime(0, now + idx * 0.04);
         gain.gain.linearRampToValueAtTime(0.05, now + idx * 0.04 + 0.01);
         gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.04 + 0.4);
-
         osc.connect(gain);
         gain.connect(this.ctx.destination);
-
         osc.start(now + idx * 0.04);
         osc.stop(now + idx * 0.04 + 0.45);
       });
@@ -98,22 +147,17 @@ class SoundManager {
     try {
       this.initContext();
       if (!this.ctx) return;
-
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-
       osc.type = 'sine';
       osc.frequency.setValueAtTime(880, now);
       osc.frequency.exponentialRampToValueAtTime(1760, now + 0.6);
-
       gain.gain.setValueAtTime(0.01, now);
       gain.gain.linearRampToValueAtTime(0.09, now + 0.1);
       gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.0);
-
       osc.connect(gain);
       gain.connect(this.ctx.destination);
-
       osc.start(now);
       osc.stop(now + 1.1);
     } catch {}
@@ -125,21 +169,16 @@ class SoundManager {
     try {
       this.initContext();
       if (!this.ctx) return;
-
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-
       osc.type = 'sine';
       osc.frequency.setValueAtTime(600, now);
       osc.frequency.exponentialRampToValueAtTime(1200, now + 0.05);
-
       gain.gain.setValueAtTime(0.08, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
-
       osc.connect(gain);
       gain.connect(this.ctx.destination);
-
       osc.start(now);
       osc.stop(now + 0.07);
     } catch {}
@@ -151,21 +190,16 @@ class SoundManager {
     try {
       this.initContext();
       if (!this.ctx) return;
-
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
-
       osc.type = 'sine';
       osc.frequency.setValueAtTime(440, now);
       osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
-
       gain.gain.setValueAtTime(0.06, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-
       osc.connect(gain);
       gain.connect(this.ctx.destination);
-
       osc.start(now);
       osc.stop(now + 0.16);
     } catch {}
@@ -173,12 +207,67 @@ class SoundManager {
 
   public unlockAudio() {
     this.initContext();
+    this.unlockSpeech();
     if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
+      void this.ctx.resume().catch(() => {});
     }
   }
 
-  // Speak text using Browser Web Speech API with simulated lip sync
+  private cleanSpeechText(text: string) {
+    return text
+      .replace(/\*[^*]*\*/g, '')
+      .replace(/\([^)]*\)/g, '')
+      .replace(/[\*\_~`]/g, '')
+      .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private splitSpeechText(text: string, maxLength = 180): string[] {
+    if (text.length <= maxLength) return [text];
+
+    const sentences = text.split(/(?<=[.!?。！？ๆ])\s*/u).filter(Boolean);
+    const chunks: string[] = [];
+    let current = '';
+
+    for (const sentence of sentences) {
+      if ((current + (current ? ' ' : '') + sentence).length <= maxLength) {
+        current += (current ? ' ' : '') + sentence;
+        continue;
+      }
+
+      if (current) chunks.push(current);
+
+      if (sentence.length <= maxLength) {
+        current = sentence;
+      } else {
+        for (let i = 0; i < sentence.length; i += maxLength) {
+          chunks.push(sentence.slice(i, i + maxLength));
+        }
+        current = '';
+      }
+    }
+
+    if (current) chunks.push(current);
+    return chunks.length ? chunks : [text.slice(0, maxLength)];
+  }
+
+  private findThaiVoice(voiceName?: string): SpeechSynthesisVoice | undefined {
+    const voices = this.refreshSpeechVoices();
+    if (voiceName) {
+      const exact = voices.find((v) => v.name === voiceName);
+      if (exact) return exact;
+    }
+
+    return voices.find((v) => {
+      const lang = (v.lang || '').toLowerCase();
+      const name = (v.name || '').toLowerCase();
+      return lang === 'th-th' || lang.startsWith('th') || name.includes('thai') || name.includes('ไทย') || name.includes('kanya') || name.includes('narisa') || name.includes('premwadee');
+    });
+  }
+
+  // Speak text using Browser Web Speech API with simulated lip sync.
+  // Designed to work reliably after a user gesture on iOS/iPadOS Safari.
   public speakWithWebSpeech(
     text: string,
     options: {
@@ -190,99 +279,134 @@ class SoundManager {
       onEnd?: () => void;
     } = {}
   ): boolean {
-    if (!('speechSynthesis' in window)) {
+    if (!('speechSynthesis' in window) || !('SpeechSynthesisUtterance' in window)) {
       return false;
     }
 
+    const cleanText = this.cleanSpeechText(text);
+    if (!cleanText) return false;
+
+    this.ensureSpeechVoiceEvents();
     this.unlockAudio();
+
     try {
       window.speechSynthesis.cancel();
     } catch {}
 
-    // Clean brackets, asterisks, English action tags and emojis from speech
-    const cleanText = text
-      .replace(/\*[^*]*\*/g, '') // remove *actions*
-      .replace(/\([^)]*\)/g, '')  // remove (parentheses)
-      .replace(/[\*\_~`]/g, '')
-      .replace(/[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
-      .trim();
+    const token = ++this.speechQueueToken;
+    const chunks = this.splitSpeechText(cleanText);
+    let chunkIndex = 0;
+    let started = false;
+    let lipSyncInterval: ReturnType<typeof setInterval> | null = null;
 
-    if (!cleanText) return false;
-
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.lang = 'th-TH';
-    // Cute, high-pitched sweet anime girl tone
-    utterance.pitch = options.pitch ?? 1.55;
-    utterance.rate = options.rate ?? 1.05;
-    utterance.volume = options.volume ?? 1.0;
-
-    // Pick best Thai female voice
-    const voices = window.speechSynthesis.getVoices();
-    if (options.voiceName) {
-      const matched = voices.find((v) => v.name === options.voiceName);
-      if (matched) utterance.voice = matched;
-    } else {
-      // Find a natural Thai voice
-      const preferredThai = voices.find(
-        (v) =>
-          v.lang.toLowerCase().startsWith('th') ||
-          v.lang.toLowerCase().includes('th-th') ||
-          v.lang.toLowerCase().includes('th_th') ||
-          v.name.toLowerCase().includes('thai') ||
-          v.name.toLowerCase().includes('ไทย') ||
-          v.name.toLowerCase().includes('kanya') ||
-          v.name.toLowerCase().includes('narisa') ||
-          v.name.toLowerCase().includes('premwadee') ||
-          v.name.toLowerCase().includes('siri')
-      );
-      if (preferredThai) {
-        utterance.voice = preferredThai;
+    const stopLipSync = () => {
+      this.isMouthSyncing = false;
+      if (lipSyncInterval) {
+        clearInterval(lipSyncInterval);
+        lipSyncInterval = null;
       }
+      this.mouthValueCallback?.(0);
+    };
+
+    const speakNext = () => {
+      if (token !== this.speechQueueToken) return;
+      if (chunkIndex >= chunks.length) {
+        stopLipSync();
+        options.onEnd?.();
+        return;
+      }
+
+      const utterance = new SpeechSynthesisUtterance(chunks[chunkIndex]);
+      utterance.lang = 'th-TH';
+      utterance.pitch = options.pitch ?? 1.45;
+      utterance.rate = options.rate ?? 0.98;
+      utterance.volume = options.volume ?? 1.0;
+
+      const voice = this.findThaiVoice(options.voiceName);
+      if (voice) utterance.voice = voice;
+
+      utterance.onstart = () => {
+        if (!started) {
+          started = true;
+          options.onStart?.();
+        }
+        this.isMouthSyncing = true;
+        if (lipSyncInterval) clearInterval(lipSyncInterval);
+        let step = 0;
+        lipSyncInterval = setInterval(() => {
+          if (!this.isMouthSyncing || token !== this.speechQueueToken) return;
+          step += 0.32;
+          const open = Math.max(0, Math.min(1, Math.sin(step) * 0.42 + Math.sin(step * 2.1) * 0.28 + 0.3));
+          this.mouthValueCallback?.(open);
+        }, 55);
+      };
+
+      utterance.onend = () => {
+        if (token !== this.speechQueueToken) return;
+        chunkIndex += 1;
+        // Yield one frame between chunks. Safari is more stable than immediately queueing everything.
+        window.setTimeout(speakNext, 30);
+      };
+
+      utterance.onerror = (event) => {
+        console.warn('SpeechSynthesis error:', event.error || event);
+        stopLipSync();
+        if (token !== this.speechQueueToken) return;
+
+        // Retry once with the default system voice if the selected Thai voice fails.
+        if (utterance.voice) {
+          const retry = new SpeechSynthesisUtterance(chunks[chunkIndex]);
+          retry.lang = 'th-TH';
+          retry.pitch = options.pitch ?? 1.45;
+          retry.rate = options.rate ?? 0.98;
+          retry.volume = options.volume ?? 1.0;
+          retry.onstart = utterance.onstart;
+          retry.onend = utterance.onend;
+          retry.onerror = () => {
+            stopLipSync();
+            options.onEnd?.();
+          };
+          try {
+            window.speechSynthesis.speak(retry);
+            return;
+          } catch {}
+        }
+
+        options.onEnd?.();
+      };
+
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.warn('speechSynthesis.speak failed:', err);
+        stopLipSync();
+        options.onEnd?.();
+      }
+    };
+
+    // Safari may initially report no voices. Give voiceschanged a brief chance before speaking.
+    const voices = this.refreshSpeechVoices();
+    if (!voices.length) {
+      window.setTimeout(() => {
+        this.refreshSpeechVoices();
+        speakNext();
+      }, 120);
+    } else {
+      speakNext();
     }
 
-    let lipSyncInterval: any = null;
-
-    utterance.onstart = () => {
-      options.onStart?.();
-      this.isMouthSyncing = true;
-      let step = 0;
-      lipSyncInterval = setInterval(() => {
-        if (!this.isMouthSyncing) return;
-        step += 0.3;
-        const open = Math.max(0, Math.sin(step) * 0.7 + Math.sin(step * 2.3) * 0.3);
-        this.mouthValueCallback?.(open);
-      }, 50);
-    };
-
-    utterance.onend = () => {
-      this.isMouthSyncing = false;
-      if (lipSyncInterval) clearInterval(lipSyncInterval);
-      this.mouthValueCallback?.(0);
-      options.onEnd?.();
-    };
-
-    utterance.onerror = (e) => {
-      console.warn("SpeechSynthesis error:", e);
-      this.isMouthSyncing = false;
-      if (lipSyncInterval) clearInterval(lipSyncInterval);
-      this.mouthValueCallback?.(0);
-      options.onEnd?.();
-    };
-
-    // Chrome workaround for paused speech engine
-    if (window.speechSynthesis.paused) {
-      window.speechSynthesis.resume();
-    }
-
-    window.speechSynthesis.speak(utterance);
     return true;
   }
 
-  // Stop all speaking and reset mouth
   public stopSpeaking() {
+    this.speechQueueToken += 1;
     if ('speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
+        window.speechSynthesis.resume();
       } catch {}
     }
     if (this.currentSource) {
@@ -306,23 +430,18 @@ class SoundManager {
     try {
       this.unlockAudio();
       if (!this.ctx) return false;
-
       this.stopSpeaking();
 
       const binaryString = atob(base64Data);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
+      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
 
       let audioBuffer: AudioBuffer;
 
       if (format === 'mp3') {
-        // Standard compressed audio decoding via Web Audio
         audioBuffer = await this.ctx.decodeAudioData(bytes.buffer.slice(0));
       } else {
-        // Raw 16-bit PCM (from Gemini)
         const int16Array = new Int16Array(bytes.buffer);
         const float32Array = new Float32Array(int16Array.length);
         for (let i = 0; i < int16Array.length; i++) {
@@ -334,23 +453,18 @@ class SoundManager {
 
       const source = this.ctx.createBufferSource();
       source.buffer = audioBuffer;
-      // Cute anime girl pitch & speed lift (1.14x gives youthful anime heroine sparkle)
       source.playbackRate.value = 1.14;
 
-      // Anime Vocal Audio Enhancement Filter Chain
-      // 1. Highpass filter to eliminate low mud and keep voice light & youthful
       const highPass = this.ctx.createBiquadFilter();
       highPass.type = 'highpass';
       highPass.frequency.value = 140;
 
-      // 2. Peaking filter for voice clarity & anime charm resonance (3.2kHz boost)
       const vocalClarity = this.ctx.createBiquadFilter();
       vocalClarity.type = 'peaking';
       vocalClarity.frequency.value = 3200;
       vocalClarity.Q.value = 1.2;
       vocalClarity.gain.value = 3.5;
 
-      // 3. High shelf filter for airy, sparkling breathiness (6.5kHz sparkle)
       const airSparkle = this.ctx.createBiquadFilter();
       airSparkle.type = 'highshelf';
       airSparkle.frequency.value = 6500;
@@ -360,7 +474,6 @@ class SoundManager {
       analyser.fftSize = 256;
       this.analyser = analyser;
 
-      // Connect DSP chain: source -> highPass -> vocalClarity -> airSparkle -> analyser -> destination
       source.connect(highPass);
       highPass.connect(vocalClarity);
       vocalClarity.connect(airSparkle);
@@ -378,13 +491,9 @@ class SoundManager {
         if (!this.isMouthSyncing || !this.analyser) return;
         analyser.getByteFrequencyData(dataArray);
         let sum = 0;
-        for (let i = 0; i < bufferLength; i++) {
-          sum += dataArray[i];
-        }
+        for (let i = 0; i < bufferLength; i++) sum += dataArray[i];
         const avg = sum / bufferLength;
-        const mouthOpen = Math.min(1.0, (avg / 128.0) * 1.6);
-        this.mouthValueCallback?.(mouthOpen);
-
+        this.mouthValueCallback?.(Math.min(1.0, (avg / 128.0) * 1.6));
         requestAnimationFrame(checkVolume);
       };
 
@@ -400,12 +509,11 @@ class SoundManager {
       source.start(0);
       return true;
     } catch (e) {
-      console.warn("Audio payload playback failed:", e);
+      console.warn('Audio payload playback failed:', e);
       return false;
     }
   }
 
-  // Play Gemini PCM audio with real-time FFT Analyser lip syncing (backward compat)
   public async playPcmAudio(
     base64Data: string,
     sampleRate = 24000,
@@ -418,16 +526,15 @@ class SoundManager {
   // Celestial Ambient Music Synthesizer
   private bgmGain: GainNode | null = null;
   private isBgmPlaying = false;
-  private bgmTimer: any = null;
+  private bgmTimer: ReturnType<typeof setTimeout> | null = null;
 
   public toggleBgm(volume = 0.15): boolean {
     if (this.isBgmPlaying) {
       this.stopBgm();
       return false;
-    } else {
-      this.startBgm(volume);
-      return true;
     }
+    this.startBgm(volume);
+    return true;
   }
 
   public getIsBgmPlaying(): boolean {
@@ -443,8 +550,7 @@ class SoundManager {
   public startBgm(volume = 0.15) {
     try {
       this.initContext();
-      if (!this.ctx) return;
-      if (this.isBgmPlaying) return;
+      if (!this.ctx || this.isBgmPlaying) return;
 
       this.isBgmPlaying = true;
       const masterGain = this.ctx.createGain();
@@ -453,8 +559,7 @@ class SoundManager {
       masterGain.connect(this.ctx.destination);
       this.bgmGain = masterGain;
 
-      // Soft warm root chord drone (C major 9th / Lydian)
-      const droneFreqs = [130.81, 196.00, 261.63, 329.63, 392.00]; // C3, G3, C4, E4, G4
+      const droneFreqs = [130.81, 196.0, 261.63, 329.63, 392.0];
       droneFreqs.forEach((f) => {
         if (!this.ctx) return;
         const osc = this.ctx.createOscillator();
@@ -467,33 +572,23 @@ class SoundManager {
         osc.start();
       });
 
-      // Procedural starry harp arpeggio generator
-      const notes = [
-        523.25, 587.33, 659.25, 783.99, 880.00, 1046.50, 1174.66, 1318.51, 1567.98
-      ]; // Pentatonic starlight scales (C5, D5, E5, G5, A5, C6, D6, E6, G6)
-
+      const notes = [523.25, 587.33, 659.25, 783.99, 880.0, 1046.5, 1174.66, 1318.51, 1567.98];
       const playNextArp = () => {
         if (!this.isBgmPlaying || !this.ctx) return;
         const note = notes[Math.floor(Math.random() * notes.length)];
         const now = this.ctx.currentTime;
-
         const osc = this.ctx.createOscillator();
         const g = this.ctx.createGain();
         osc.type = Math.random() > 0.4 ? 'sine' : 'triangle';
         osc.frequency.setValueAtTime(note, now);
-
         g.gain.setValueAtTime(0, now);
         g.gain.linearRampToValueAtTime(0.04, now + 0.05);
         g.gain.exponentialRampToValueAtTime(0.0001, now + 2.4);
-
         osc.connect(g);
         g.connect(masterGain);
-
         osc.start(now);
         osc.stop(now + 2.5);
-
-        const nextDelay = 800 + Math.random() * 1200;
-        this.bgmTimer = setTimeout(playNextArp, nextDelay);
+        this.bgmTimer = setTimeout(playNextArp, 800 + Math.random() * 1200);
       };
 
       playNextArp();
