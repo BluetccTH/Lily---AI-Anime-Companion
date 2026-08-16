@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { CubismFramework, Option } from '@framework/live2dcubismframework';
 import { CubismUserModel } from '@framework/model/cubismusermodel';
+import { CubismMoc } from '@framework/model/cubismmoc';
 import { CubismRenderer_WebGL } from '@framework/rendering/cubismrenderer_webgl';
 import { CubismMatrix44 } from '@framework/math/cubismmatrix44';
 import { ExpressionType } from '../types';
@@ -20,10 +21,7 @@ let cubismStarted = false;
 function ensureCubism5Started() {
   if (cubismStarted) return;
   const option = new Option();
-  // Cubism 5 Framework expects both fields to be supplied. Omitting logFunction
-  // leaves Core.Logging without a callable callback and causes
-  // "Logging.logFunction is not a function" when loading a MOC.
-  (option as any).logFunction = (message: string) => console.log(message);
+  (option as any).logFunction = (message: string) => console.log(`[Cubism] ${message}`);
   option.loggingLevel = 2 as any;
   CubismFramework.startUp(option);
   CubismFramework.initialize();
@@ -125,13 +123,35 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         const setting = await response.json();
 
         const model = new CubismUserModel();
-        const mocUrl = `${base}live2d/${setting.FileReferences.Moc}`;
+        const mocPath = setting?.FileReferences?.Moc;
+        if (typeof mocPath !== 'string' || !mocPath) throw new Error('model3.json is missing FileReferences.Moc.');
+
+        const mocUrl = `${base}live2d/${mocPath}`;
         const mocResponse = await fetch(mocUrl, { cache: 'no-store' });
         if (!mocResponse.ok) throw new Error(`MOC3 HTTP ${mocResponse.status}`);
         const mocBuffer = await mocResponse.arrayBuffer();
+        const mocSize = mocBuffer.byteLength;
 
-        model.loadModel(mocBuffer, false);
-        if (!model.getModel()) throw new Error('Cubism 5 Core failed to create the model.');
+        if (mocSize < 8) throw new Error(`MOC3 is too small (${mocSize} bytes): ${mocUrl}`);
+        const header = new TextDecoder('ascii').decode(new Uint8Array(mocBuffer.slice(0, 4)));
+        if (header !== 'MOC3') throw new Error(`Invalid MOC3 header "${header}" (${mocSize} bytes): ${mocUrl}`);
+
+        const version = CubismMoc.getMocVersionFromBuffer(mocBuffer);
+        const latestVersion = new CubismMoc(new ArrayBuffer(0) as any);
+        void latestVersion;
+        console.info('[Lily Cubism 5] MOC diagnostics', { url: mocUrl, bytes: mocSize, version });
+
+        if (!Number.isFinite(version) || version <= 0) {
+          throw new Error(`Unable to read MOC3 version from buffer (${mocSize} bytes): ${mocUrl}`);
+        }
+
+        const consistent = CubismMoc.hasMocConsistency(mocBuffer);
+        if (!consistent) {
+          throw new Error(`MOC3 integrity check failed (version ${version}, ${mocSize} bytes). Re-export or replace ${mocPath}.`);
+        }
+
+        model.loadModel(mocBuffer, true);
+        if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (MOC v${version}, ${mocSize} bytes).`);
 
         model.createRenderer(canvas.width, canvas.height, 2);
         const renderer = model.getRenderer();
@@ -176,7 +196,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           const t = performance.now() * 0.001;
           const expression = expressionRef.current;
           const mood = expression === 'love' ? 1 : expression === 'shy' || expression === 'blush' ? 0.7 : 0.35;
-
           setParameter('ParamAngleX', Math.sin(t * 0.75) * (3 + mood * 3));
           setParameter('ParamAngleY', Math.cos(t * 0.66) * (2 + mood * 2));
           setParameter('ParamAngleZ', Math.sin(t * 0.42) * (2 + mood * 4));
@@ -187,29 +206,16 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           const blink = Math.max(0, Math.min(1, Math.sin(t * 0.35 + 1.2) > 0.94 ? 0.05 : 1));
           setParameter('ParamEyeLOpen', blink);
           setParameter('ParamEyeROpen', blink);
-
           const breath = 0.5 + Math.sin(t * 1.5) * 0.5;
           setParameter('ParamBreath', breath);
           setParameter('ParamBreath2', breath);
 
           const speaking = speakingRef.current || mouthRef.current > 0.01;
-          const mouth = speaking
-            ? Math.max(mouthRef.current, 0.22 + Math.sin(t * 13) * 0.2 + Math.sin(t * 6.7) * 0.12)
-            : 0;
+          const mouth = speaking ? Math.max(mouthRef.current, 0.22 + Math.sin(t * 13) * 0.2 + Math.sin(t * 6.7) * 0.12) : 0;
           setParameter('ParamMouthOpenY', Math.max(0, Math.min(1, mouth)));
           setParameter('ParamJawOpen', Math.max(0, Math.min(1, mouth * 0.75)));
 
-          const expressionMap: Record<ExpressionType, number> = {
-            blush: 1,
-            happy: 2,
-            wink: 3,
-            surprised: 4,
-            thinking: 5,
-            pout: 6,
-            shy: 7,
-            love: 8,
-            normal: 0,
-          };
+          const expressionMap: Record<ExpressionType, number> = { blush: 1, happy: 2, wink: 3, surprised: 4, thinking: 5, pout: 6, shy: 7, love: 8, normal: 0 };
           const selected = expressionMap[expression];
           for (let i = 1; i <= 8; i++) setParameter(`ParamBiaoQ${i}`, selected === i ? 1 : 0);
 
