@@ -4,7 +4,9 @@ import path from 'path';
 import { defineConfig } from 'vite';
 
 export default defineConfig(() => ({
-  base: './',
+  // GitHub Pages project site base path.
+  // Using an absolute base avoids relative URL issues with Live2D's nested assets.
+  base: '/Lily---AI-Anime-Companion/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
