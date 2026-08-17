@@ -16,6 +16,7 @@ interface Cubism5CanvasProps {
 }
 
 let cubismStarted = false;
+let mocCreatePatched = false;
 
 function ensureCubism5Started() {
   if (cubismStarted) return;
@@ -25,6 +26,36 @@ function ensureCubism5Started() {
   CubismFramework.startUp(option);
   CubismFramework.initialize();
   cubismStarted = true;
+}
+
+function installMocCreateCompatibilityPatch() {
+  if (mocCreatePatched) return;
+  const Core = (globalThis as any).Live2DCubismCore;
+  if (!Core?.Moc?.fromArrayBuffer) {
+    throw new Error('Live2D Cubism Core is not available.');
+  }
+
+  // The bundled R5 framework calls Core.Version.csmGetMocVersion(ArrayBuffer).
+  // The Web Core binding exposed by the hosted runtime uses the native-style
+  // address/size form internally. The consistency check already proves the MOC
+  // is valid, so bypass only that bookkeeping call and create the Core MOC
+  // directly. This keeps the actual Core MOC validation/creation path intact.
+  const originalCreate = (CubismMoc as any).create;
+  (CubismMoc as any).create = (mocBytes: ArrayBuffer, shouldCheck = false) => {
+    if (shouldCheck && !CubismMoc.hasMocConsistency(mocBytes)) return null;
+
+    const coreMoc = Core.Moc.fromArrayBuffer(mocBytes);
+    if (!coreMoc) return null;
+
+    const cubismMoc = new (CubismMoc as any)(coreMoc);
+    (cubismMoc as any)._mocVersion = new Uint8Array(mocBytes)[4] ?? 0;
+    return cubismMoc;
+  };
+
+  if (typeof originalCreate !== 'function') {
+    throw new Error('CubismMoc.create() is unavailable.');
+  }
+  mocCreatePatched = true;
 }
 
 export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
@@ -64,8 +95,18 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
   }, []);
 
   const updateTransform = useCallback(() => {
-    // Keep the first pass stable while the renderer owns the canvas viewport.
-    void framing; void scaleOffset; void yOffset;
+    const model = modelRef.current;
+    const renderer = rendererRef.current;
+    if (!model || !renderer || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const matrix = model.getModelMatrix();
+    const height = framing === 'full' ? 1.92 : 1.42;
+    const scale = Math.max(0.5, Math.min(2.5, scaleOffset));
+    matrix.setHeight(height * scale);
+    matrix.setY(-0.02 + yOffset);
+    renderer.setMvpMatrix(matrix.getArray());
+    void canvas;
   }, [framing, scaleOffset, yOffset]);
 
   useEffect(() => {
@@ -81,13 +122,14 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
       try {
         setLoadError(null);
         ensureCubism5Started();
+        installMocCreateCompatibilityPatch();
 
         const gl = canvas.getContext('webgl2', {
           alpha: true,
           antialias: true,
           premultipliedAlpha: true,
           preserveDrawingBuffer: false,
-        });
+        }) as WebGLRenderingContext | null;
         if (!gl) throw new Error('WebGL2 is unavailable on this device.');
 
         const base = import.meta.env.BASE_URL;
@@ -116,32 +158,24 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
         if (mocBuffer.byteLength < 16) throw new Error(`MOC3 is too small (${mocBuffer.byteLength} bytes): ${mocUrl}`);
         if (header !== 'MOC3') throw new Error(`Invalid MOC3 header "${header}" (${mocBuffer.byteLength} bytes): ${mocUrl}`);
-        if (mocVersionByte !== 5) {
-          throw new Error(`Unsupported MOC3 version ${mocVersionByte}. This build expects Cubism 5 MOC version 5.`);
-        }
+        if (mocVersionByte !== 5) throw new Error(`Unsupported MOC3 version ${mocVersionByte}. Expected Cubism 5 MOC version 5.`);
 
         const consistent = CubismMoc.hasMocConsistency(mocBuffer);
         console.info('[Lily Cubism 5] MOC consistency:', consistent);
-        if (!consistent) {
-          throw new Error(
-            `MOC3 integrity check failed (v${mocVersionByte}, ${mocBuffer.byteLength} bytes). ` +
-            'Re-export this model with Cubism 5.0.02 or newer.'
-          );
-        }
+        if (!consistent) throw new Error(`MOC3 integrity check failed (v${mocVersionByte}, ${mocBuffer.byteLength} bytes).`);
 
         const model = new CubismUserModel();
         model.loadModel(mocBuffer, true);
-        if (!model.getModel()) {
-          throw new Error(`Cubism 5 Core failed to create the model (v${mocVersionByte}, ${mocBuffer.byteLength} bytes).`);
-        }
+        if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (${mocBuffer.byteLength} bytes).`);
 
         model.createRenderer(canvas.width, canvas.height, 2);
         const renderer = model.getRenderer();
-        renderer.startUp(gl);
+        renderer.startUp(gl as any);
         renderer.setIsPremultipliedAlpha(true);
-        renderer.loadShaders(`${base}cubism5-shaders/WebGL/`);
 
-        const textures = setting.FileReferences.Textures || [];
+        const textures = Array.isArray(setting?.FileReferences?.Textures)
+          ? setting.FileReferences.Textures
+          : [];
         if (!textures.length) throw new Error('No texture is defined in model3.json.');
 
         for (let i = 0; i < textures.length; i++) {
@@ -150,18 +184,20 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           image.decoding = 'async';
           image.src = textureUrl;
           await image.decode();
+
           const texture = gl.createTexture();
           if (!texture) throw new Error(`Unable to create WebGL texture ${i}.`);
           gl.bindTexture(gl.TEXTURE_2D, texture);
           gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
-          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+          gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
-          gl.generateMipmap(gl.TEXTURE_2D);
           renderer.bindTexture(i, texture);
         }
+
+        renderer.loadShaders(`${base}cubism5-shaders/WebGL/`);
 
         if (cancelled) {
           model.release();
@@ -170,6 +206,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
         modelRef.current = model;
         rendererRef.current = renderer;
+        updateTransform();
         setReady(true);
 
         const loop = () => {
@@ -177,33 +214,42 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           const t = performance.now() * 0.001;
           const expression = expressionRef.current;
           const mood = expression === 'love' ? 1 : expression === 'shy' || expression === 'blush' ? 0.7 : 0.35;
+
           setParameter('ParamAngleX', Math.sin(t * 0.75) * (3 + mood * 3));
           setParameter('ParamAngleY', Math.cos(t * 0.66) * (2 + mood * 2));
           setParameter('ParamAngleZ', Math.sin(t * 0.42) * (2 + mood * 4));
           setParameter('ParamBodyAngleX', Math.sin(t * 0.5) * 1.8);
           setParameter('ParamEyeBallX', Math.sin(t * 0.55) * 0.15);
           setParameter('ParamEyeBallY', Math.cos(t * 0.43) * 0.1);
-          const blink = Math.max(0, Math.min(1, Math.sin(t * 0.35 + 1.2) > 0.94 ? 0.05 : 1));
+
+          const blink = Math.sin(t * 0.35 + 1.2) > 0.94 ? 0.05 : 1;
           setParameter('ParamEyeLOpen', blink);
           setParameter('ParamEyeROpen', blink);
+
           const breath = 0.5 + Math.sin(t * 1.5) * 0.5;
           setParameter('ParamBreath', breath);
           setParameter('ParamBreath2', breath);
 
           const speaking = speakingRef.current || mouthRef.current > 0.01;
-          const mouth = speaking ? Math.max(mouthRef.current, 0.22 + Math.sin(t * 13) * 0.2 + Math.sin(t * 6.7) * 0.12) : 0;
+          const mouth = speaking
+            ? Math.max(mouthRef.current, 0.22 + Math.sin(t * 13) * 0.2 + Math.sin(t * 6.7) * 0.12)
+            : 0;
           setParameter('ParamMouthOpenY', Math.max(0, Math.min(1, mouth)));
           setParameter('ParamJawOpen', Math.max(0, Math.min(1, mouth * 0.75)));
 
-          const expressionMap: Record<ExpressionType, number> = { blush: 1, happy: 2, wink: 3, surprised: 4, thinking: 5, pout: 6, shy: 7, love: 8, normal: 0 };
+          const expressionMap: Record<ExpressionType, number> = {
+            blush: 1, happy: 2, wink: 3, surprised: 4, thinking: 5,
+            pout: 6, shy: 7, love: 8, normal: 0,
+          };
           const selected = expressionMap[expression];
           for (let i = 1; i <= 8; i++) setParameter(`ParamBiaoQ${i}`, selected === i ? 1 : 0);
 
           model.update();
+          updateTransform();
+          renderer.setRenderState(null, [0, 0, canvas.width, canvas.height]);
           gl.viewport(0, 0, canvas.width, canvas.height);
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT);
-          renderer.setRenderState(null, [0, 0, canvas.width, canvas.height]);
           renderer.doDrawModel(`${base}cubism5-shaders/WebGL/`);
           rafRef.current = requestAnimationFrame(loop);
         };
@@ -232,7 +278,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
       window.removeEventListener('resize', resize);
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
-      modelRef.current?.release();
+      try { modelRef.current?.release(); } catch {}
       modelRef.current = null;
       rendererRef.current = null;
       setReady(false);
