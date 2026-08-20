@@ -66,7 +66,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
   const updateTransform = useCallback(() => {
     const model = modelRef.current;
     const renderer = rendererRef.current;
-    if (!model || !renderer || !canvasRef.current) return;
+    if (!model || !renderer) return;
     const matrix = model.getModelMatrix();
     const height = framing === 'full' ? 1.92 : 1.42;
     const scale = Math.max(0.5, Math.min(2.5, scaleOffset));
@@ -133,8 +133,13 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         model.loadModel(mocBuffer, true);
         if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (${mocBuffer.byteLength} bytes).`);
 
-        model.createRenderer(canvas.width, canvas.height, 2);
+        // Cubism Web Framework R4 owns the renderer lifecycle. createRenderer()
+        // accepts only the mask-buffer count; the WebGL context is supplied by
+        // renderer.startUp(). The previous code passed canvas dimensions as
+        // renderer arguments, which made the framework initialize incorrectly.
+        model.createRenderer(2);
         const renderer = model.getRenderer();
+        if (!renderer) throw new Error('Cubism 5 renderer creation failed.');
         renderer.startUp(gl as any);
         renderer.setIsPremultipliedAlpha(true);
 
@@ -160,10 +165,8 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
           gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
           renderer.bindTexture(i, texture);
+          gl.bindTexture(gl.TEXTURE_2D, null);
         }
-
-        // Cubism Web Framework R4 embeds the official WebGL shader programs
-        // in CubismShaderManager_WebGL. No external shader URL is required.
 
         if (cancelled) {
           model.release();
@@ -212,7 +215,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
 
           model.update();
           updateTransform();
-          renderer.setRenderState(null, [0, 0, canvas.width, canvas.height]);
+          renderer.setRenderState(null as any, [0, 0, canvas.width, canvas.height]);
           gl.viewport(0, 0, canvas.width, canvas.height);
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT);
@@ -231,7 +234,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.max(1, Math.floor(canvas.clientWidth * dpr));
       canvas.height = Math.max(1, Math.floor(canvas.clientHeight * dpr));
-      if (rendererRef.current) rendererRef.current.setRenderTargetSize(canvas.width, canvas.height);
+      // R4 has no setRenderTargetSize() API. The canvas viewport is the render target.
       updateTransform();
     };
 
