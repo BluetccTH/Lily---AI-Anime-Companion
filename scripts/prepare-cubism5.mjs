@@ -1,20 +1,16 @@
-import { existsSync, mkdirSync, cpSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, mkdirSync, resolve } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 const root = resolve(process.cwd());
 const cacheRoot = resolve(root, '.cache');
 const frameworkDir = resolve(cacheRoot, 'CubismWebFramework');
-const shaderSource = resolve(frameworkDir, 'Shaders', 'WebGL');
-const publicShaderDir = resolve(root, 'public', 'cubism5-shaders');
 
 mkdirSync(cacheRoot, { recursive: true });
 
 // The bundled Core in public/live2dcubismcore.min.js is Cubism Core 5.1.0.
-// Cubism 5 R5 requires the newer Core/API pair (including the offscreen model
-// API). Do NOT patch an R5 framework to impersonate that API. Use the Cubism 5
-// R4 framework, which is the compatible framework generation for Core 5.1 and
-// still supports Cubism 5 MOC3 version 5 models.
+// Use the matching Cubism 5 R4 framework. R4 embeds its WebGL shader programs
+// in src/rendering/cubismshader_webgl.ts, so there is intentionally no
+// Shaders/WebGL directory to copy into public/.
 if (!existsSync(frameworkDir)) {
   execFileSync('git', [
     'clone',
@@ -28,16 +24,6 @@ if (!existsSync(frameworkDir)) {
   execFileSync('git', ['-C', frameworkDir, 'reset', '--hard', 'origin/5-r.4'], { stdio: 'inherit' });
 }
 
-if (!existsSync(shaderSource)) {
-  throw new Error(`Cubism 5 shader directory not found: ${shaderSource}`);
-}
-
-// Keep the official framework source untouched. In particular, do not add an
-// artificial `model.offscreens` object and do not rewrite MOC version data.
-// The Core and Framework must remain a matching Cubism 5 generation.
-mkdirSync(publicShaderDir, { recursive: true });
-cpSync(shaderSource, publicShaderDir, { recursive: true });
-
 console.log(`[Cubism 5] Framework prepared: ${frameworkDir}`);
 console.log('[Cubism 5] Framework version: R4 (compatible with bundled Core 5.1.0)');
-console.log(`[Cubism 5] WebGL shaders copied to: ${publicShaderDir}`);
+console.log('[Cubism 5] R4 embeds WebGL shaders in cubismshader_webgl.ts; no external shader directory is required.');
