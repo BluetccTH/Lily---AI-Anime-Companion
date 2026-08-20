@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, cpSync, resolve } from 'node:fs';
+import { existsSync, mkdirSync, cpSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 const root = resolve(process.cwd());
