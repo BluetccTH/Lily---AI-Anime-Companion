@@ -16,7 +16,6 @@ interface Cubism5CanvasProps {
 }
 
 let cubismStarted = false;
-let mocCreatePatched = false;
 
 function ensureCubism5Started() {
   if (cubismStarted) return;
@@ -26,36 +25,6 @@ function ensureCubism5Started() {
   CubismFramework.startUp(option);
   CubismFramework.initialize();
   cubismStarted = true;
-}
-
-function installMocCreateCompatibilityPatch() {
-  if (mocCreatePatched) return;
-  const Core = (globalThis as any).Live2DCubismCore;
-  if (!Core?.Moc?.fromArrayBuffer) {
-    throw new Error('Live2D Cubism Core is not available.');
-  }
-
-  // The bundled R5 framework calls Core.Version.csmGetMocVersion(ArrayBuffer).
-  // The Web Core binding exposed by the hosted runtime uses the native-style
-  // address/size form internally. The consistency check already proves the MOC
-  // is valid, so bypass only that bookkeeping call and create the Core MOC
-  // directly. This keeps the actual Core MOC validation/creation path intact.
-  const originalCreate = (CubismMoc as any).create;
-  (CubismMoc as any).create = (mocBytes: ArrayBuffer, shouldCheck = false) => {
-    if (shouldCheck && !CubismMoc.hasMocConsistency(mocBytes)) return null;
-
-    const coreMoc = Core.Moc.fromArrayBuffer(mocBytes);
-    if (!coreMoc) return null;
-
-    const cubismMoc = new (CubismMoc as any)(coreMoc);
-    (cubismMoc as any)._mocVersion = new Uint8Array(mocBytes)[4] ?? 0;
-    return cubismMoc;
-  };
-
-  if (typeof originalCreate !== 'function') {
-    throw new Error('CubismMoc.create() is unavailable.');
-  }
-  mocCreatePatched = true;
 }
 
 export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
@@ -98,15 +67,12 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
     const model = modelRef.current;
     const renderer = rendererRef.current;
     if (!model || !renderer || !canvasRef.current) return;
-
-    const canvas = canvasRef.current;
     const matrix = model.getModelMatrix();
     const height = framing === 'full' ? 1.92 : 1.42;
     const scale = Math.max(0.5, Math.min(2.5, scaleOffset));
     matrix.setHeight(height * scale);
     matrix.setY(-0.02 + yOffset);
     renderer.setMvpMatrix(matrix.getArray());
-    void canvas;
   }, [framing, scaleOffset, yOffset]);
 
   useEffect(() => {
@@ -122,7 +88,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
       try {
         setLoadError(null);
         ensureCubism5Started();
-        installMocCreateCompatibilityPatch();
 
         const gl = canvas.getContext('webgl2', {
           alpha: true,
@@ -165,6 +130,8 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         if (!consistent) throw new Error(`MOC3 integrity check failed (v${mocVersionByte}, ${mocBuffer.byteLength} bytes).`);
 
         const model = new CubismUserModel();
+        // Use the official Cubism 5 R4 Core/Framework path without rewriting
+        // the MOC version or injecting fake R5 offscreen fields.
         model.loadModel(mocBuffer, true);
         if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (${mocBuffer.byteLength} bytes).`);
 
