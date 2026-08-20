@@ -130,8 +130,6 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
         if (!consistent) throw new Error(`MOC3 integrity check failed (v${mocVersionByte}, ${mocBuffer.byteLength} bytes).`);
 
         const model = new CubismUserModel();
-        // Use the official Cubism 5 R4 Core/Framework path without rewriting
-        // the MOC version or injecting fake R5 offscreen fields.
         model.loadModel(mocBuffer, true);
         if (!model.getModel()) throw new Error(`Cubism 5 Core failed to create the model (${mocBuffer.byteLength} bytes).`);
 
@@ -164,7 +162,8 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           renderer.bindTexture(i, texture);
         }
 
-        renderer.loadShaders(`${base}cubism5-shaders/WebGL/`);
+        // Cubism Web Framework R4 embeds the official WebGL shader programs
+        // in CubismShaderManager_WebGL. No external shader URL is required.
 
         if (cancelled) {
           model.release();
@@ -217,7 +216,7 @@ export const Cubism5Canvas: React.FC<Cubism5CanvasProps> = ({
           gl.viewport(0, 0, canvas.width, canvas.height);
           gl.clearColor(0, 0, 0, 0);
           gl.clear(gl.COLOR_BUFFER_BIT);
-          renderer.doDrawModel(`${base}cubism5-shaders/WebGL/`);
+          renderer.doDrawModel();
           rafRef.current = requestAnimationFrame(loop);
         };
 
