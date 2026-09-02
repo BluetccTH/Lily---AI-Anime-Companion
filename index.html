@@ -36,9 +36,24 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Noto+Sans+Thai:wght@300;400;500;700&display=swap" rel="stylesheet">
 
-  <!-- Live2D Cubism Core SDKs -->
-  <script src="/live2d.min.js"></script>
-  <script src="/live2dcubismcore.min.js"></script>
+  <!-- Live2D Cubism Core SDKs (Synchronously loaded before modules) -->
+  <script src="./live2d.min.js"></script>
+  <script src="./live2dcubismcore.min.js"></script>
+  <script>
+    // Fallback if local SDK is unavailable on specific host path
+    if (typeof window !== 'undefined' && !window.Live2D) {
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/gh/duskload/live2d-viewer/dist/live2d.min.js';
+      s.async = false;
+      document.head.appendChild(s);
+    }
+    if (typeof window !== 'undefined' && !window.Live2DCubismCore) {
+      var s2 = document.createElement('script');
+      s2.src = 'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js';
+      s2.async = false;
+      document.head.appendChild(s2);
+    }
+  </script>
 </head>
 <body class="bg-[#030308] text-[#f1f0fa] antialiased overflow-hidden select-none">
   <div id="root"></div>
