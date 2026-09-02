@@ -1,6 +1,0 @@
-{
-  "name": "Lily - AI Anime Companion",
-  "description": "Interactive celestial Live2D AI Anime companion featuring real-time motion tracking, voice synthesis, conversational intelligence with Gemini, and responsive emotional expressions.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
