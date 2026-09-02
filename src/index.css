@@ -3,7 +3,7 @@
 @layer base {
   * {
     box-sizing: border-box;
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: 'Space Grotesk', 'Noto Sans Thai', 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
   }
 }
 
