@@ -7,6 +7,49 @@ import { ExpressionType } from '../types';
 // Expose PIXI globally for pixi-live2d-display
 (window as any).PIXI = PIXI;
 
+const getAssetUrl = (relativePath: string) => {
+  const base = ((import.meta as any).env?.BASE_URL as string) || './';
+  const cleanBase = base.endsWith('/') ? base : `${base}/`;
+  const cleanPath = relativePath.startsWith('/') ? relativePath.slice(1) : relativePath;
+  return `${cleanBase}${cleanPath}`;
+};
+
+const loadScriptOnce = (src: string): Promise<boolean> => {
+  return new Promise((resolve) => {
+    if (document.querySelector(`script[src="${src}"]`)) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = false; // execute in order
+    script.onload = () => resolve(true);
+    script.onerror = () => {
+      console.warn(`Failed to load script: ${src}`);
+      resolve(false);
+    };
+    document.head.appendChild(script);
+  });
+};
+
+const ensureLive2DCoreLoaded = async (): Promise<void> => {
+  // Check Cubism 2
+  if (!(window as any).Live2D) {
+    await loadScriptOnce(getAssetUrl('live2d.min.js'));
+  }
+  if (!(window as any).Live2D) {
+    await loadScriptOnce('https://cdn.jsdelivr.net/gh/duskload/live2d-viewer/dist/live2d.min.js');
+  }
+
+  // Check Cubism 4
+  if (!(window as any).Live2DCubismCore) {
+    await loadScriptOnce(getAssetUrl('live2dcubismcore.min.js'));
+  }
+  if (!(window as any).Live2DCubismCore) {
+    await loadScriptOnce('https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js');
+  }
+};
+
 export interface CharacterModelInfo {
   id: string;
   name: string;
@@ -213,12 +256,17 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
           container.appendChild(app.view as HTMLCanvasElement);
         }
 
+        // Ensure Cubism core SDKs are loaded in window first
+        await ensureLive2DCoreLoaded();
+
+        if (isCancelled) return;
+
         // Register Live2D Ticker
         Live2DModel.registerTicker(PIXI.Ticker);
 
         // Find configured model
         const targetModel = CHARACTER_MODELS.find((m) => m.id === modelId) || CHARACTER_MODELS[0];
-        let modelUrl = targetModel.url;
+        const modelUrl = getAssetUrl(targetModel.url);
         let model: any = null;
 
         try {
@@ -228,12 +276,12 @@ export const Live2DCanvas: React.FC<Live2DCanvasProps> = ({
         } catch (loadErr: any) {
           console.warn(`Error loading model ${modelUrl}, falling back to Haru:`, loadErr);
           try {
-            model = await Live2DModel.from('/live2d/haru/haru_greeter_t03.model3.json', {
+            model = await Live2DModel.from(getAssetUrl('/live2d/haru/haru_greeter_t03.model3.json'), {
               autoInteract: false,
             });
           } catch (haruErr: any) {
             console.warn('Haru fallback error, attempting Shizuku:', haruErr);
-            model = await Live2DModel.from('/live2d/shizuku/shizuku.model.json', {
+            model = await Live2DModel.from(getAssetUrl('/live2d/shizuku/shizuku.model.json'), {
               autoInteract: false,
             });
           }
